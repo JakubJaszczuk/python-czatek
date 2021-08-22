@@ -1,0 +1,5 @@
+venv
+.vs_code
+.mypy_cache
+db.db
+__pycache__
