@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import create_engine
-from entity import Base
-from entity import User
+from entity import Base, UserEntity
+from typing import Optional
 
 
 class Database:
@@ -10,30 +10,20 @@ class Database:
         self.engine = create_engine('sqlite:///db.db')
         Base.metadata.create_all(self.engine)
 
-    def create_user(self, user: User):
+    def create_user(self, user: UserEntity) -> bool:
         with Session(self.engine) as session:
             try:
                 session.add(user)
                 session.commit()
+                return True
             except Exception:
+                return False
 
+    def get_user_by_name(self, username: str) -> Optional[UserEntity]:
+        with Session(self.engine) as session:
+            return session.query(UserEntity).filter_by(name=username).first()
 
     def log(self, message: str):
         with Session(self.engine) as session:
-            session.add(message)
-            session.commit()
-
-
-class DatabaseCache:
-
-    def __init__(self):
-        self.engine = create_engine('sqlite:///:memory:')
-        Base.metadata.create_all(self.engine)
-
-    def login_user(self):
-        pass
-
-    def log(self):
-        with Session(self.persistent) as session:
             session.add(message)
             session.commit()

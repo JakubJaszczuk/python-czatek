@@ -1,0 +1,38 @@
+syntax = "proto3";
+import "google/protobuf/timestamp.proto";
+
+
+message Message {
+	enum Command {
+		UNKNOWN = 0;
+		MSG = 1;
+		ME = 2;
+		JOIN = 3;
+	}
+
+	google.protobuf.Timestamp timestamp = 1;
+	string channel = 2;
+	Command command = 3;
+	string body = 4;
+}
+
+
+message User {
+	string name = 1;
+	string password = 2;
+}
+
+message SystemMessage {
+	enum Type {
+		ERROR = 0;
+		INFO = 1;
+		LOG = 2;
+	}
+
+	Type type = 1;
+	string message = 2;
+}
+
+message Token {
+	bytes data = 1;
+}

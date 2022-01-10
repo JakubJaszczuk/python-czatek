@@ -1,5 +1,7 @@
 venv
-.vs_code
+.vscode
 .mypy_cache
+.pytest_cache
 db.db
 __pycache__
+src/proto
