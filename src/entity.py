@@ -1,8 +1,10 @@
+from __future__ import annotations
 from sqlalchemy.orm import declarative_base
+from sqlalchemy.sql.functions import now as db_now
 from sqlalchemy import Column, String, Integer, DateTime
 from proto.data_pb2 import User as UserProto
-from datetime import datetime as dt
 from security import hash_password
+from datetime import datetime as dt
 
 
 Base = declarative_base()
@@ -12,7 +14,7 @@ class AbstractEntity(Base):
     __abstract__ = True
 
     id = Column(Integer, primary_key=True)
-    creation_date = Column(DateTime, default=dt.now())
+    creation_date = Column(DateTime, default=db_now())
 
 
 class UserEntity(AbstractEntity):

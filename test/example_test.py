@@ -42,6 +42,11 @@ class TestScopes2:
         assert setup == [1]
 
 
+class Owo:
+    def __init__(self):
+        self.x = 1
+
+
 @pytest.fixture(scope='class')
 def set_and_tear():
     x = 1

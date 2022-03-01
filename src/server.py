@@ -1,50 +1,61 @@
 from aiohttp import web, BasicAuth, WSMsgType
-from aiohttp.web import Response, Request, WebSocketResponse
+from aiohttp.web import Response, Request
 import proto.data_pb2 as proto
 import database as db
-import asyncio
 from entity import UserEntity
 from security import check_password, generate_token
 from collections import deque
 from datetime import datetime, timedelta
-from typing import Optional
+from weakref import WeakSet
 
 
 class Session:
 
-    def __init__(self):
-        self.token: bytes = None
-        self.user: UserEntity = None
+    def __init__(self, token: bytes, user: UserEntity):
+        self.token: bytes = token
+        self.user: UserEntity = user
         self.expiration = datetime.now() + timedelta(minutes=15)
+        self.ws_session = None
 
     def is_expired(self):
         t = datetime.now()
         return t > self.expiration
 
-
-class Message:
-
-    def __init__(self):
-        self.timestamp = None
-        self.user = None
-        self.message = None
+    def username(self) -> str:
+        return self.user.name
 
 
 class Channel:
 
     def __init__(self, name: str):
-        self.name = name
-        self.sessions: set[Session] = set()
-        self.history: deque[Message] = deque(maxlen=20)
+        self.name: str = name
+        self.sessions: WeakSet[Session] = WeakSet()
+        self.history: deque[proto.Message] = deque(maxlen=20)
 
-    def receive(self, msg):
-        self.history.push(msg)
+    def join_channel(self, session: Session):
+        self.sessions.add(session)
 
-    def send(self, msg):
-        pass
+    def exit_channel(self, session: Session):
+        self.sessions.remove(session)
+
+    def receive_message(self, session: Session, msg: proto.Message):
+        if self.check_session(session):
+            self.history.append(msg)
+
+    async def receive_message_and_send(self, session: Session, msg: proto.Message):
+        if self.check_session(session):
+            self.history.append(msg)
+            await self.send_to_all(msg)
+
+    async def send_to_all(self, msg):
+        for session in self.sessions:
+            await session.ws_session.send_bytes(msg.SerializeToString())
 
     def has_clients(self):
         return self.sessions
+
+    def check_session(self, session: Session):
+        return session in self.sessions
 
 
 class ServerApp:
@@ -52,26 +63,21 @@ class ServerApp:
     def __init__(self, port=12345):
         self.persistent = db.Database()
         self.port = port
-        self.sessions: set[Session] = {}
-        self.channels: set[Channel] = {}
+        self.sessions: dict[str, Session] = {}
+        self.channels: dict[str, Channel] = {}
 
         app = web.Application()
         app.add_routes([
             web.post('/register', self.register),
             web.get('/login', self.login),
-            web.get('/msg', self.message),
+            web.get('/msg', self.ws_connection),
         ])
         self.app = app
 
     def run(self):
+        main_channel = Channel('main')
+        self.channels.add(main_channel)
         web.run_app(self.app, port=self.port)
-        # self.cleanup_task = asyncio.create_task(self.cleanup())
-
-    async def cleanup(self):
-        while True:
-            await asyncio.sleep(60)
-            self.channels = {ch for ch in self.channels if ch.has_clients()}
-            self.sessions = {s for s in self.sessions if s.is_expired()}
 
     async def register(self, req: Request):
         if not req.can_read_body:
@@ -96,38 +102,47 @@ class ServerApp:
         if not check_password(auth.password, user.password, user.salt):
             return Response(status=401)
         token = generate_token()
-        print(token)
-        token = proto.Token(data=token)
-        print(token)
-        return Response(status=200, body=token.SerializeToString())
+        self.sessions[token] = Session(token, user)
+        return Response(status=200, body=token)
+
+    async def ws_connection(self, req: Request):
+        token = self.get_token(req)
+        is_token_valid = self.validate_token(token)
+        if not is_token_valid:
+            return Response(status=401)
+        ws = web.WebSocketResponse()
+        session = self.sessions[token]
+        session.ws_session = ws
+        await ws.prepare(req)
+        async for msg in ws:
+            msg.username = session.username()
+            if msg.type == WSMsgType.BINARY:
+                message = proto.Message.FromString(msg.data)
+                self.dispatch_message(session, message)
+        return ws
 
     @staticmethod
-    def get_token(request: Request) -> Optional[str]:
-        token: str = request.headers.get('Authorization')
+    def get_token(request: Request) -> bytes:
+        token: bytes = request.headers.get('Authorization')
         if token is None:
             token = request.query.get('access_token')
         else:
-            bearer, token = token.split(' ')
+            bearer, token = token.split(b' ')
             if bearer.lower() != 'bearer':
                 raise Exception('Incorrect auth method')
         return token
 
-    async def message(self, req: Request):
-        token = self.get_token(req)
-        ws = web.WebSocketResponse()
-        await ws.prepare(req)
-        async for msg in ws:
-            if msg.type == WSMsgType.BINARY:
-                message = proto.Message.FromString(msg.data)
-                self.channels[message.channel]
-            else:
-                print(req.query)
-                print(req.headers)
-                print(msg.data)
-            await ws.send_str('Server Ping')
+    def validate_token(self, token: bytes) -> bool:
+        return token in self.sessions
 
-        print('websocket connection closed')
-        return ws
+    async def dispatch_message(self, session: Session, msg: proto.Message):
+        channel = self.channels[msg.channel]
+        if msg.type == proto.Message.Command.JOIN:
+            channel.join_channel(session)
+        elif msg.type == proto.Message.Command.EXIT:
+            channel.exit_channel(session)
+        elif msg.type == proto.Message.Command.MSG:
+            await channel.receive_message_and_send(session, msg)
 
 
 def main():
@@ -137,4 +152,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-    #asyncio.run(main())
